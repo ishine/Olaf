@@ -13,19 +13,19 @@
 
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#ifndef OLAF_AUDIO_READER_H
-#define OLAF_AUDIO_READER_H
+#ifndef OLAF_FP_FILE_WRITER_H
+#define OLAF_FP_FILE_WRITER_H
+	#include <stdint.h>
 
-#include <stddef.h> // for size_t
+	#include "olaf_fp_extractor.h"
 
-//the PCM data of an audio file
-struct olaf_audio {
-	size_t fileSizeInSamples;
-	float* audioData;
-};
+	typedef struct Olaf_FP_File_Writer Olaf_FP_File_Writer;
 
+	Olaf_FP_File_Writer * olaf_fp_file_writer_new(Olaf_Config * , uint32_t audio_file_identifier);
 
-//reads a RAW audio file into a struct representing samples
-void olaf_audio_reader_read(const char* filename,struct olaf_audio* audio);
+	void olaf_fp_file_writer_store( Olaf_FP_File_Writer * , struct extracted_fingerprints * );
 
-#endif // OLAF_AUDIO_READER_H
+	void olaf_fp_file_writer_destroy(Olaf_FP_File_Writer *);
+
+#endif //OLAF_FP_FILE_WRITER_H
+	

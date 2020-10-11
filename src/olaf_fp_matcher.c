@@ -76,7 +76,7 @@ Olaf_FP_Matcher * olaf_fp_matcher_new(Olaf_Config * config,Olaf_FP_DB* db ){
 
 	fp_matcher->config = config;
 
-	fp_matcher->results = (struct match_result *) malloc(config->maxDBResults  * sizeof(struct match_result));
+	fp_matcher->results = (struct match_result *) malloc(config->maxResults  * sizeof(struct match_result));
 
 	//make sure every match field is initialized
 	for(int i = 0 ; i < fp_matcher->config->maxResults ; i++){
@@ -160,7 +160,7 @@ void ageResults(Olaf_FP_Matcher * fp_matcher,int lastQueryFingerprintT1){
 			//Remove matches that are too old (age over max)
 			// a negative age occurs when time overflows after 2^13 buffers (+- 8 min)
 			// also remove these results
-			printf("Age:  %d , last: %d, current %d \n",age,lastQueryFingerprintT1,fp_matcher->results[i].queryFingerprintT1);
+			//printf("Age:  %d , last: %d, current %d \n",age,lastQueryFingerprintT1,fp_matcher->results[i].queryFingerprintT1);
 			if(fp_matcher->config->maxResultAge < age){
 				//If the result is the current max, reset the indicator and the currentMatchScore
 				fp_matcher->results[i].timeDiff = 0;

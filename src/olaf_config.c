@@ -23,6 +23,8 @@ Olaf_Config* olaf_config_default(){
 
 	//construct the directory to write db info to: /home/user/.olaf/db/
 	const char * homeDir = getenv("HOME");
+
+	//This assume a UNIX file separator
 	const char* dbDir = "/.olaf/db/";
 	char * fullDbFolderName = (char *) malloc(strlen(homeDir) +  strlen(dbDir));
 	strcpy(fullDbFolderName,homeDir);
@@ -61,7 +63,7 @@ Olaf_Config* olaf_config_default(){
 	//max freq distance between two event points for fingerprint
 	config->maxFreqDistance = config->minFreqDistance + (1<<6); //bins for fingerprint construction
 	//number of times a event point is reused
-	config->maxFingerprintsPerPoint = 5;
+	config->maxFingerprintsPerPoint = 3;
 
 	//to check if fingerprint is actually new
 	config->recentFingerprintSize=30;

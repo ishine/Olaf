@@ -13,23 +13,19 @@
 
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
-#ifndef OLAF_FP_DB_WRITER_H
-#define OLAF_FP_DB_WRITER_H
-	#include <stdint.h>
+#ifndef OLAF_READER_H
+#define OLAF_READER_H
 
-	#include "olaf_fp_db.h"
-	#include "olaf_fp_extractor.h"
+#include "olaf_config.h"
+
+typedef struct Olaf_Reader Olaf_Reader;
+
+Olaf_Reader * olaf_reader_new(Olaf_Config * config,const char * source);
+
+size_t olaf_reader_read(Olaf_Reader *,float *);
+
+// free up memory and release resources
+void olaf_reader_destroy(Olaf_Reader * );
 
 
-	typedef struct Olaf_FP_DB_Writer Olaf_FP_DB_Writer;
-
-	Olaf_FP_DB_Writer * olaf_fp_db_writer_new(Olaf_FP_DB* db,uint32_t audio_file_identifier);
-
-	void olaf_fp_db_writer_store( Olaf_FP_DB_Writer * , struct extracted_fingerprints * );
-
-	void olaf_fp_db_writer_delete( Olaf_FP_DB_Writer * , struct extracted_fingerprints * );
-
-	void olaf_fp_db_writer_destroy(Olaf_FP_DB_Writer *, bool store);
-
-#endif //OLAF_FP_DB_WRITER_H
-	
+#endif // OLAF_READER_H

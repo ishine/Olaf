@@ -26,9 +26,9 @@ ID_TO_AUDIO_FILENAME = File.expand_path("~/.olaf/file_list.json")
 EXECUTABLE_LOCATION = "/usr/local/bin/olaf_c"
 
 ALLOWED_AUDIO_FILE_EXTENSIONS = "**/*.{m4a,wav,mp4,wv,ape,ogg,mp3,flac,wma,M4A,WAV,MP4,WV,APE,OGG,MP3,FLAC,WMA}"
-AUDIO_DURATION_COMMAND = "ffprobe -i '__input__' -show_entries format=duration -v quiet -of csv=\"p=0\""
-AUDIO_CONVERT_COMMAND = "ffmpeg -hide_banner -y -loglevel panic  -i '__input__' -ac 1 -ar 8000 -f f32le -acodec pcm_f32le '__output__'"
-AUDIO_CONVERT_COMMAND_WITH_START_DURATION = "ffmpeg -hide_banner -y -loglevel panic -ss __start__ -i '__input__' -t __duration__ -ac 1 -ar 8000 -f f32le -acodec pcm_f32le '__output__'"
+AUDIO_DURATION_COMMAND = "ffprobe -i \"__input__\" -show_entries format=duration -v quiet -of csv=\"p=0\""
+AUDIO_CONVERT_COMMAND = "ffmpeg -hide_banner -y -loglevel panic  -i \"__input__\" -ac 1 -ar 8000 -f f32le -acodec pcm_f32le \"__output__\""
+AUDIO_CONVERT_COMMAND_WITH_START_DURATION = "ffmpeg -hide_banner -y -loglevel panic -ss __start__ -i \"__input__\" -t __duration__ -ac 1 -ar 8000 -f f32le -acodec pcm_f32le \"__output__\""
 MONITOR_LENGTH_IN_SECONDS = 7
 
 #expand the argument to a list of files to process.
@@ -68,19 +68,19 @@ end
 
 def monitor(index,length,audio_filename,ignore_self_match, skip_size)
 	audio_filename = File.expand_path(audio_filename)
-	audio_filename_escaped =  audio_filename.gsub(/([\[\]\{\}\*\?\\])/, '\\\\\1')
+	audio_filename_escaped =  escape_audio_filename(audio_filename) 
 
 	tot_duration = audio_file_duration(audio_filename)
 	start = 0
 	stop = start + skip_size
 
-	query_audio_identifer = `#{EXECUTABLE_LOCATION} name_to_id '#{audio_filename_escaped}'`.to_i.to_s
+	query_audio_identifer = audio_filename_to_olaf_id(audio_filename_escaped)
 
 	while tot_duration > stop do
 
 		with_converted_audio_part(audio_filename_escaped,start,skip_size) do |tempfile|
 
-			stdout, stderr, status = Open3.capture3("#{EXECUTABLE_LOCATION} query '#{tempfile.path}' #{query_audio_identifer}")
+			stdout, stderr, status = Open3.capture3("#{EXECUTABLE_LOCATION} query \"#{tempfile.path}\" #{query_audio_identifer}")
 			
 			stderr.split("\n").each do |line|
 				if(line =~/.*match_id: (\d+)/)
@@ -103,12 +103,13 @@ def monitor(index,length,audio_filename,ignore_self_match, skip_size)
 end
 
 def query(index,length,audio_filename,ignore_self_match)
-	audio_filename_escaped =  audio_filename.gsub(/([\[\]\{\}\*\?\\])/, '\\\\\1')
+	audio_filename_escaped =  escape_audio_filename(audio_filename)
+	return unless audio_filename_escaped
 
-	query_audio_identifer = `#{EXECUTABLE_LOCATION} name_to_id '#{audio_filename_escaped}'`.to_i.to_s
+	query_audio_identifer = audio_filename_to_olaf_id(audio_filename_escaped)
 
 	with_converted_audio(audio_filename_escaped) do |tempfile|
-		stdout, stderr, status = Open3.capture3("#{EXECUTABLE_LOCATION} query '#{tempfile.path}'")
+		stdout, stderr, status = Open3.capture3("#{EXECUTABLE_LOCATION} query \"#{tempfile.path}\"")
 
 		stderr.split("\n").each do |line|
 			if(line =~/.*match_id: (\d+)/)
@@ -123,6 +124,9 @@ def query(index,length,audio_filename,ignore_self_match)
 				puts "#{index}/#{length} #{File.basename audio_filename} #{line}"
 			end
 		end
+
+		#prints optional debug or error messages
+		puts stdout unless (stdout == nil or stdout.strip.size == 0)
 	end	
 end
 
@@ -138,6 +142,31 @@ def with_converted_audio(audio_filename_escaped)
 	#remove the temp file afer use
 	tempfile.close
 	tempfile.unlink
+end
+
+def with_converted_audio_files(audio_filenames_escaped)
+	tempfiles = Array.new
+
+	audio_filenames_escaped.each do |audio_filename_escaped|
+		tempfile = Tempfile.new(["olaf_audio_#{rand(200000)}", '.raw'])
+		convert_command = AUDIO_CONVERT_COMMAND
+		convert_command = convert_command.gsub("__input__",audio_filename_escaped)
+		convert_command = convert_command.gsub("__output__",tempfile.path)
+	
+		system convert_command
+
+		puts "Transcoded #{File.basename audio_filename_escaped}"
+
+		tempfiles << tempfile
+	end
+
+	yield tempfiles
+
+	tempfiles.each do |tempfile|
+		#remove the temp file afer use
+		tempfile.close
+		tempfile.unlink
+	end	
 end
 
 def with_converted_audio_part(audio_filename_escaped,start,duration)
@@ -157,24 +186,177 @@ def with_converted_audio_part(audio_filename_escaped,start,duration)
 	tempfile.unlink
 end
 
+def audio_filename_to_olaf_id(audio_filename_escaped)
+	`#{EXECUTABLE_LOCATION} name_to_id "#{audio_filename_escaped}"`.to_i.to_s
+end
+
+def escape_audio_filename(audio_filename)
+	begin
+		audio_filename.gsub(/(["])/, '\\\\\1')
+	rescue
+		puts "ERROR, probably invalid byte sequence in UTF-8 in #{audio_filename}"
+		return nil
+	end
+end
+
+
 def store(index,length,audio_filename)
-	audio_filename_escaped =  audio_filename.gsub(/([\[\]\{\}\*\?\\])/, '\\\\\1')
-	audio_identifer = `#{EXECUTABLE_LOCATION} name_to_id '#{audio_filename_escaped}'`.to_i.to_s
+
+	audio_filename_escaped = escape_audio_filename(audio_filename)
+	return unless audio_filename_escaped
+
+	audio_identifer = audio_filename_to_olaf_id(audio_filename_escaped)
 			
 	#Do not store same audio twice
 	if(ID_TO_AUDIO_HASH.has_key? audio_identifer)
-		puts "#{File.basename audio_filename} already in storage"
+		puts "#{index}/#{length} #{File.basename audio_filename} already in storage"
 	else
 		with_converted_audio(audio_filename_escaped) do |tempfile|
 			ID_TO_AUDIO_HASH[audio_identifer] = audio_filename;
 			File.write(ID_TO_AUDIO_FILENAME,JSON.pretty_generate(ID_TO_AUDIO_HASH) + "\n")
 
-			stdout, stderr, status = Open3.capture3("#{EXECUTABLE_LOCATION} store '#{tempfile.path}' #{audio_identifer}")
+			stdout, stderr, status = Open3.capture3("#{EXECUTABLE_LOCATION} store \"#{tempfile.path}\" #{audio_identifer}")
 
 			puts "#{index}/#{length} #{File.basename audio_filename} #{stderr.strip}" 
 		end
 	end
 end
+
+def store_all(audio_filenames)
+
+	audio_filenames_escaped = Array.new
+	audio_identifiers = Array.new
+	orig_audio_filenames = Array.new
+
+	audio_filenames.each do |audio_filename|
+		audio_filename_escaped = escape_audio_filename(audio_filename)
+		next unless audio_filename_escaped
+
+		audio_identifier = audio_filename_to_olaf_id(audio_filename_escaped)
+
+		if ID_TO_AUDIO_HASH.has_key? audio_identifier
+			puts "#{File.basename audio_filename} already in storage"
+		else
+			audio_filenames_escaped << audio_filename_escaped
+			audio_identifiers << audio_identifier
+		
+			ID_TO_AUDIO_HASH[audio_identifier] = audio_filename;
+		end
+	end
+
+	return unless audio_filenames_escaped.size > 0
+
+	with_converted_audio_files(audio_filenames_escaped) do |tempfiles|
+
+		argument = ""
+
+		tempfiles.each_with_index do |tempfile, index|
+			argument = argument + " \"#{tempfile.path}\" #{audio_identifiers[index]}" 
+		end
+
+
+		Open3.popen3("#{EXECUTABLE_LOCATION} store #{argument}") do |stdin, stdout, stderr, wait_thr|
+			Thread.new do
+    			stdout.each {|l| puts l }
+  			end
+
+  			Thread.new do
+    			stderr.each {|l| puts l }
+  			end
+
+			wait_thr.value
+		end
+		
+	end
+
+	File.write(ID_TO_AUDIO_FILENAME,JSON.pretty_generate(ID_TO_AUDIO_HASH) + "\n")
+end
+
+def del(index,length,audio_filename)
+
+	audio_filename_escaped = escape_audio_filename(audio_filename)
+	return unless audio_filename_escaped
+
+	audio_identifer = audio_filename_to_olaf_id(audio_filename_escaped)
+			
+	#Do not store same audio twice
+	with_converted_audio(audio_filename_escaped) do |tempfile|
+		
+		ID_TO_AUDIO_HASH.delete(audio_identifer);
+
+		File.write(ID_TO_AUDIO_FILENAME,JSON.pretty_generate(ID_TO_AUDIO_HASH) + "\n")
+		stdout, stderr, status = Open3.capture3("#{EXECUTABLE_LOCATION} del \"#{tempfile.path}\" #{audio_identifer}")
+		puts "#{index}/#{length} #{File.basename audio_filename} #{stderr.strip}" 
+	end
+end
+
+def bulk_store(index,length,audio_filename)
+
+	audio_filename_escaped = escape_audio_filename(audio_filename)
+	return unless audio_filename_escaped
+
+	audio_identifer = audio_filename_to_olaf_id(audio_filename_escaped)
+			
+	#Do not store same audio twice
+	if(ID_TO_AUDIO_HASH.has_key? audio_identifer)
+		puts "#{index}/#{length} #{File.basename audio_filename} already in storage"
+	else
+		with_converted_audio(audio_filename_escaped) do |tempfile|
+			ID_TO_AUDIO_HASH[audio_identifer] = audio_filename;
+			
+			stdout, stderr, status = Open3.capture3("#{EXECUTABLE_LOCATION} bulk_store \"#{tempfile.path}\" #{audio_identifer}")
+
+			puts "#{index}/#{length} #{File.basename audio_filename} #{stderr.strip}" 
+		end
+	end
+end
+
+def bulk_load
+	folder_name = File.join(Dir.home,".olaf","db")
+	collector_file = File.join(folder_name,"collector.tdb")
+	sorted_file = File.join(folder_name,"sorted.tdb")
+
+	system("rm '#{collector_file}'") if(File.exists? collector_file)
+	system("rm '#{sorted_file}'") if(File.exists? sorted_file)
+
+	Dir.glob(File.join(folder_name,"*.tdb")).each do |tdb_file|
+		puts "Handling #{tdb_file}"
+		system("cat '#{tdb_file}' >> '#{collector_file}'")
+	end
+	puts "Sorting #{collector_file} (#{File.size(collector_file)/1024/1024} MB)"
+
+	system("sort -n '#{collector_file}' > '#{sorted_file}'")
+	
+	puts "Storing in Olaf DB"
+
+	#remove collector file
+	system("rm '#{collector_file}'") if(File.exists? collector_file)
+
+	Open3.popen3("#{EXECUTABLE_LOCATION} bulk_load") do |stdin, stdout, stderr, wait_thr|
+		Thread.new do
+			stdout.each {|l| puts l }
+			end
+
+			Thread.new do
+			stderr.each {|l| puts l }
+			end
+
+		wait_thr.value
+	end
+
+	Open3.popen3("#{EXECUTABLE_LOCATION} stats") do |stdin, stdout, stderr, wait_thr|
+		Thread.new do
+			stdout.each {|l| puts l }
+			end
+
+			Thread.new do
+			stderr.each {|l| puts l }
+			end
+
+		wait_thr.value
+	end
+end
+
 
 FileUtils.touch(ID_TO_AUDIO_FILENAME)
 
@@ -199,8 +381,34 @@ end
 return unless command 
 
 if command.eql? "store"
+
+	slice_number = 0
+	slice_size = 50
+	audio_files.each_slice(slice_size) do |audio_files_slice|
+		store_all(audio_files_slice)
+		slice_number = slice_number + 1
+		puts "Processed #{[slice_number * slice_size,audio_files.size].min} / #{audio_files.size}"
+	end
+
+	#audio_files.each_with_index do |audio_file, index|
+		#store(index+1,audio_files.length,audio_file)
+	#end
+elsif command.eql? "bulk_store"
+	require 'threach'
+	audio_files.threach(3, :each_with_index) do |audio_file, index|
+		bulk_store(index+1,audio_files.length,audio_file)
+
+		if (index % 100 == 0)
+			File.write(ID_TO_AUDIO_FILENAME,JSON.pretty_generate(ID_TO_AUDIO_HASH) + "\n")
+		end
+	end
+
+	File.write(ID_TO_AUDIO_FILENAME,JSON.pretty_generate(ID_TO_AUDIO_HASH) + "\n")
+elsif command.eql? "bulk_load"
+	bulk_load
+elsif command.eql? "del"
 	audio_files.each_with_index do |audio_file, index|
-		store(index+1,audio_files.length,audio_file)
+		del(index+1,audio_files.length,audio_file)
 	end
 elsif command.eql? "query"
 	audio_files.each_with_index do |audio_file, index|
