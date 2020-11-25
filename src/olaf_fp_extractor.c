@@ -52,7 +52,7 @@ void olaf_fp_extractor_destroy(Olaf_FP_Extractor * fp_extractor){
 	free(fp_extractor);
 }
 
-int compareEventPoints (const void * a, const void * b) {
+int olaf_ep_compare_event_points (const void * a, const void * b) {
 	struct eventpoint aPoint = *(struct eventpoint*) a;
 	struct eventpoint bPoint = *(struct eventpoint*) b;
 	return (aPoint.timeIndex - bPoint.timeIndex);
@@ -87,7 +87,7 @@ int compareEventPoints (const void * a, const void * b) {
 uint32_t olaf_fp_extractor_hash(struct fingerprint f){
 	//uint16_t frequency1 = f.frequencyBin1;
 	//uint16_t deltaF = abs(f.frequencyBin1 - f.frequencyBin2);
-	uint16_t deltaT = f.timeIndex1 - f.timeIndex2;
+	uint16_t deltaT = f.timeIndex2 - f.timeIndex1;
 	uint16_t f1LargerThanF2 = f.frequencyBin1 > f.frequencyBin2 ? 1 : 0;
 	
 	//uint16_t frequency1Interpolated = (int) (f.fractionalFrequencyBin1 * 2);
@@ -112,9 +112,6 @@ uint32_t olaf_fp_extractor_hash(struct fingerprint f){
 	          ((f1LargerThanF2           &  ((1<<1) -1)   ) <<  6) +
 	          ((deltaT                   &  ((1<<6) -1)   ) <<  0) ;
 
-
-
-
 	return fp_hash;
 }
 
@@ -128,6 +125,10 @@ struct extracted_fingerprints * olaf_fp_extractor_extract(Olaf_FP_Extractor * fp
 		//do not evaluate empty points
 		if(f1==0 && t1==0)
 			break;
+
+		//do not allow f1 == 0, often noisy and cause of collisions
+		if(f1==0)
+			continue;
 
 		//do not evaulate points with more than x prints per event point
 		if(ppp1>fp_extractor->config->maxFingerprintsPerPoint)
@@ -152,6 +153,10 @@ struct extracted_fingerprints * olaf_fp_extractor_extract(Olaf_FP_Extractor * fp
 			//do not evaluate points to far in the future
 			if(tDiff > fp_extractor->config->maxTimeDistance)
 				break;
+
+			//do not allow f2 == 0, often noisy and cause of collisions
+			if(f2==0)
+				continue;
 
 			//do not evaulate points with more than x prints per event point
 			if(ppp2>fp_extractor->config->maxFingerprintsPerPoint)
@@ -229,7 +234,7 @@ struct extracted_fingerprints * olaf_fp_extractor_extract(Olaf_FP_Extractor * fp
 
 	//sort the array from low timeIndex to high
 	//the marked event points have a high time index
-	qsort(eventPoints->eventPoints,eventPoints->eventPointIndex, sizeof(struct eventpoint), compareEventPoints);
+	qsort(eventPoints->eventPoints,eventPoints->eventPointIndex, sizeof(struct eventpoint), olaf_ep_compare_event_points);
 
 	//find the first marked event point: this is where the next point needs to be stored
 	for(int i = 0 ; i <eventPoints->eventPointIndex ; i++){

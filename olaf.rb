@@ -16,20 +16,23 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-
 require 'json'
 require 'fileutils'
 require 'tempfile'
 require 'open3'
 
 ID_TO_AUDIO_FILENAME = File.expand_path("~/.olaf/file_list.json")
+DB_FOLDER = File.expand_path("~/.olaf/db") #needs to be the same in the c code
 EXECUTABLE_LOCATION = "/usr/local/bin/olaf_c"
+CHECK_INCOMING_AUDIO = true
+MONITOR_LENGTH_IN_SECONDS = 7
+BULK_STORE_THREADS = 7 #change to e.g. your number of CPU cores -1
+
 
 ALLOWED_AUDIO_FILE_EXTENSIONS = "**/*.{m4a,wav,mp4,wv,ape,ogg,mp3,flac,wma,M4A,WAV,MP4,WV,APE,OGG,MP3,FLAC,WMA}"
 AUDIO_DURATION_COMMAND = "ffprobe -i \"__input__\" -show_entries format=duration -v quiet -of csv=\"p=0\""
 AUDIO_CONVERT_COMMAND = "ffmpeg -hide_banner -y -loglevel panic  -i \"__input__\" -ac 1 -ar 8000 -f f32le -acodec pcm_f32le \"__output__\""
 AUDIO_CONVERT_COMMAND_WITH_START_DURATION = "ffmpeg -hide_banner -y -loglevel panic -ss __start__ -i \"__input__\" -t __duration__ -ac 1 -ar 8000 -f f32le -acodec pcm_f32le \"__output__\""
-MONITOR_LENGTH_IN_SECONDS = 7
 
 #expand the argument to a list of files to process.
 # a file is simply added to the list
@@ -118,7 +121,11 @@ def query(index,length,audio_filename,ignore_self_match)
 				#ignore self matches if requested (for deduplication)
 				unless(ignore_self_match and query_audio_identifer.eql? matching_audio_id)
 					filename = ID_TO_AUDIO_HASH[matching_audio_id]
-					puts "#{index}/#{length} #{File.basename audio_filename} matches #{File.basename filename} #{line}\n"
+					if(filename)
+						puts "#{index}/#{length} #{File.basename audio_filename} matches #{File.basename filename} #{line}\n"
+					else
+						puts "Did not find filename for id #{matching_audio_id}."
+					end
 				end
 			else 
 				puts "#{index}/#{length} #{File.basename audio_filename} #{line}"
@@ -199,6 +206,18 @@ def escape_audio_filename(audio_filename)
 	end
 end
 
+def print(index,length,audio_filename)
+	audio_filename_escaped = escape_audio_filename(audio_filename)
+	return unless audio_filename_escaped
+	with_converted_audio(audio_filename_escaped) do |tempfile|
+	
+		stdout, stderr, status = Open3.capture3("#{EXECUTABLE_LOCATION} print \"#{tempfile.path}\"")
+		stdout.split("\n").each do |line|
+			puts "#{index}/#{length},#{File.basename audio_filename},#{line}\n"
+		end
+	end
+end
+
 
 def store(index,length,audio_filename)
 
@@ -206,10 +225,12 @@ def store(index,length,audio_filename)
 	return unless audio_filename_escaped
 
 	audio_identifer = audio_filename_to_olaf_id(audio_filename_escaped)
-			
+
 	#Do not store same audio twice
 	if(ID_TO_AUDIO_HASH.has_key? audio_identifer)
 		puts "#{index}/#{length} #{File.basename audio_filename} already in storage"
+	elsif(CHECK_INCOMING_AUDIO && audio_file_duration(audio_filename) == 0)
+		puts "#{index}/#{length} #{File.basename audio_filename} INVALID audio file? Duration zero."
 	else
 		with_converted_audio(audio_filename_escaped) do |tempfile|
 			ID_TO_AUDIO_HASH[audio_identifer] = audio_filename;
@@ -236,6 +257,8 @@ def store_all(audio_filenames)
 
 		if ID_TO_AUDIO_HASH.has_key? audio_identifier
 			puts "#{File.basename audio_filename} already in storage"
+		elsif(CHECK_INCOMING_AUDIO && audio_file_duration(audio_filename) == 0)
+			puts "#{File.basename audio_filename} INVALID audio file? Duration zero."
 		else
 			audio_filenames_escaped << audio_filename_escaped
 			audio_identifiers << audio_identifier
@@ -297,9 +320,12 @@ def bulk_store(index,length,audio_filename)
 
 	audio_identifer = audio_filename_to_olaf_id(audio_filename_escaped)
 			
+	
 	#Do not store same audio twice
 	if(ID_TO_AUDIO_HASH.has_key? audio_identifer)
 		puts "#{index}/#{length} #{File.basename audio_filename} already in storage"
+	elsif(CHECK_INCOMING_AUDIO && audio_file_duration(audio_filename) == 0)
+		puts "#{index}/#{length} #{File.basename audio_filename} INVALID audio file? Duration zero."
 	else
 		with_converted_audio(audio_filename_escaped) do |tempfile|
 			ID_TO_AUDIO_HASH[audio_identifer] = audio_filename;
@@ -312,53 +338,46 @@ def bulk_store(index,length,audio_filename)
 end
 
 def bulk_load
-	folder_name = File.join(Dir.home,".olaf","db")
-	collector_file = File.join(folder_name,"collector.tdb")
+	folder_name = DB_FOLDER
+
 	sorted_file = File.join(folder_name,"sorted.tdb")
 
-	system("rm '#{collector_file}'") if(File.exists? collector_file)
 	system("rm '#{sorted_file}'") if(File.exists? sorted_file)
 
-	Dir.glob(File.join(folder_name,"*.tdb")).each do |tdb_file|
-		puts "Handling #{tdb_file}"
-		system("cat '#{tdb_file}' >> '#{collector_file}'")
-	end
-	puts "Sorting #{collector_file} (#{File.size(collector_file)/1024/1024} MB)"
+	puts "Sorting tdb files"
 
-	system("sort -n '#{collector_file}' > '#{sorted_file}'")
+	system("sort -m -n #{File.join(folder_name,"*.tdb")} > '#{sorted_file}'")
 	
 	puts "Storing in Olaf DB"
-
-	#remove collector file
-	system("rm '#{collector_file}'") if(File.exists? collector_file)
 
 	Open3.popen3("#{EXECUTABLE_LOCATION} bulk_load") do |stdin, stdout, stderr, wait_thr|
 		Thread.new do
 			stdout.each {|l| puts l }
-			end
+		end
 
-			Thread.new do
+		Thread.new do
 			stderr.each {|l| puts l }
-			end
-
+		end
 		wait_thr.value
 	end
 
 	Open3.popen3("#{EXECUTABLE_LOCATION} stats") do |stdin, stdout, stderr, wait_thr|
 		Thread.new do
 			stdout.each {|l| puts l }
-			end
+		end
 
-			Thread.new do
+		Thread.new do
 			stderr.each {|l| puts l }
-			end
-
+		end
 		wait_thr.value
 	end
 end
 
+#create the db folder unless it exists
+FileUtils.mkdir_p DB_FOLDER unless File.exist?(DB_FOLDER)
 
-FileUtils.touch(ID_TO_AUDIO_FILENAME)
+#create the id->audio file json file unless it exists
+FileUtils.touch(ID_TO_AUDIO_FILENAME) unless File.exist?(ID_TO_AUDIO_FILENAME)
 
 command  = ARGV[0]
 
@@ -395,7 +414,7 @@ if command.eql? "store"
 	#end
 elsif command.eql? "bulk_store"
 	require 'threach'
-	audio_files.threach(3, :each_with_index) do |audio_file, index|
+	audio_files.threach(BULK_STORE_THREADS, :each_with_index) do |audio_file, index|
 		bulk_store(index+1,audio_files.length,audio_file)
 
 		if (index % 100 == 0)
@@ -409,6 +428,10 @@ elsif command.eql? "bulk_load"
 elsif command.eql? "del"
 	audio_files.each_with_index do |audio_file, index|
 		del(index+1,audio_files.length,audio_file)
+	end
+elsif command.eql? "print"
+	audio_files.each_with_index do |audio_file, index|
+		print(index+1,audio_files.length,audio_file)
 	end
 elsif command.eql? "query"
 	audio_files.each_with_index do |audio_file, index|
