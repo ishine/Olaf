@@ -80,12 +80,12 @@ Olaf_Config* olaf_config_default(){
 	config->maxResultAge = 350;//7.5 seconds
 	
 	//number of matches (hash collisions) 
-	config->maxDBResults = 1000;//for larger data sets use around 2000
+	config->maxDBCollisions = 1000;//for larger data sets use around 2000
 
 	//Find matches for t1 + 1, t1 + 0 and t1 -0 or not
 	// triples the number of queries to the database to
 	// offset off by one errors (time discretisation error)
-	config->includeOffByOneMatches = false;
+	config->includeOffByOneMatches = true;
 
 	return config;
 }
